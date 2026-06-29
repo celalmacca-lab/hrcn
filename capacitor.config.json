@@ -1,0 +1,7 @@
+{
+  "appId": "tr.cepac.harcana",
+  "appName": "Harcana",
+  "webDir": "www",
+  "backgroundColor": "#070811",
+  "android": { "backgroundColor": "#070811", "allowMixedContent": false }
+}
