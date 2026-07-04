@@ -58,34 +58,35 @@ jobs:
           cd android
           ./gradlew bundleRelease --no-daemon --stacktrace
  
-      # ==== YENİ: İMZALAMA ADIMLARI ====
+      # ==== İMZALAMA (AAB için doğru yöntem: jarsigner) ====
       - name: Keystore'u secret'tan çöz
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/harcana.keystore"
-          echo "Keystore olusturuldu: $(ls -la $RUNNER_TEMP/harcana.keystore | awk '{print $5}') byte"
+          echo "Keystore boyutu: $(stat -c%s $RUNNER_TEMP/harcana.keystore) byte"
  
-      - name: AAB'yi imzala
+      - name: Keystore içeriğini doğrula (teşhis)
         run: |
-          BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
-          echo "Kullanilan build-tools: $BUILD_TOOLS"
-          "$BUILD_TOOLS/apksigner" sign \
-            --ks "$RUNNER_TEMP/harcana.keystore" \
-            --ks-key-alias harcana \
-            --ks-pass pass:"${{ secrets.STORE_PASSWORD }}" \
-            --key-pass pass:"${{ secrets.KEY_PASSWORD }}" \
-            --min-sdk-version 23 \
-            android/app/build/outputs/bundle/release/app-release.aab || \
-          jarsigner -keystore "$RUNNER_TEMP/harcana.keystore" \
+          keytool -list -v \
+            -keystore "$RUNNER_TEMP/harcana.keystore" \
+            -storepass "${{ secrets.STORE_PASSWORD }}" | head -20
+ 
+      - name: AAB'yi jarsigner ile imzala
+        run: |
+          jarsigner -verbose \
+            -keystore "$RUNNER_TEMP/harcana.keystore" \
             -storepass "${{ secrets.STORE_PASSWORD }}" \
             -keypass "${{ secrets.KEY_PASSWORD }}" \
             -sigalg SHA256withRSA -digestalg SHA-256 \
-            android/app/build/outputs/bundle/release/app-release.aab harcana
+            android/app/build/outputs/bundle/release/app-release.aab \
+            harcana
  
-      - name: İmzalı AAB'yi doğrula
+      - name: İmzayı doğrula
         run: |
+          jarsigner -verify -verbose -certs \
+            android/app/build/outputs/bundle/release/app-release.aab | tail -5
           cd android/app/build/outputs/bundle/release
-          echo "Imzali AAB hazir: $(ls -la app-release.aab | awk '{print $5}') byte"
           mv app-release.aab harcana-release-imzali.aab
+          echo "Imzali AAB hazir: $(stat -c%s harcana-release-imzali.aab) byte"
  
       # ==== ARTIFACT YÜKLEME ====
       - name: APK'yı yükle (test/sideload için)
