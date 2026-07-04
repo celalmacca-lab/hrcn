@@ -1,55 +1,103 @@
 name: APK Derle
-
+ 
 on:
   push:
     branches: [ main, master ]
   workflow_dispatch:
-
+ 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Kodu çek
         uses: actions/checkout@v4
-
+ 
       - name: Node 20 kur
         uses: actions/setup-node@v4
         with:
           node-version: 20
-
+ 
       - name: Java 17 kur
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-
+ 
       - name: Android SDK kur
         uses: android-actions/setup-android@v3
-
+ 
       - name: Bağımlılıkları yükle
         run: npm install
-
+ 
       - name: Kütüphaneleri offline gömle
         run: npm run vendor || echo "vendor atlandı (CDN'e düşülecek)"
-
+ 
       - name: Android platformunu ekle
         run: npx cap add android
-
+ 
+      - name: Hedef SDK 36 yap (Play Store 31 Ağustos 2026 şartı)
+        run: bash scripts/patch_android.sh || echo "SDK yaması atlandı"
+ 
       - name: İkon ve splash üret
         run: npx capacitor-assets generate --android --iconBackgroundColor '#070811' --splashBackgroundColor '#070811' || echo "varsayilan ikon kullanilacak"
-
+ 
+      - name: Ana ekran widget'ını enjekte et (best-effort)
+        run: bash scripts/patch_widget.sh || echo "widget yaması atlandı, uygulama widget'sız çalışır"
+ 
       - name: Web varlıklarını senkronla
         run: npx cap sync android
-
-      - name: APK derle (debug - telefona kurulabilir)
+ 
+      - name: APK derle (debug - telefona kurulabilir, test için)
         run: |
           cd android
           chmod +x ./gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace
-
-      - name: APK'yı yükle
+ 
+      - name: AAB derle (release - imzasız ham çıktı)
+        run: |
+          cd android
+          ./gradlew bundleRelease --no-daemon --stacktrace
+ 
+      # ==== YENİ: İMZALAMA ADIMLARI ====
+      - name: Keystore'u secret'tan çöz
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/harcana.keystore"
+          echo "Keystore olusturuldu: $(ls -la $RUNNER_TEMP/harcana.keystore | awk '{print $5}') byte"
+ 
+      - name: AAB'yi imzala
+        run: |
+          BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+          echo "Kullanilan build-tools: $BUILD_TOOLS"
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks "$RUNNER_TEMP/harcana.keystore" \
+            --ks-key-alias harcana \
+            --ks-pass pass:"${{ secrets.STORE_PASSWORD }}" \
+            --key-pass pass:"${{ secrets.KEY_PASSWORD }}" \
+            --min-sdk-version 23 \
+            android/app/build/outputs/bundle/release/app-release.aab || \
+          jarsigner -keystore "$RUNNER_TEMP/harcana.keystore" \
+            -storepass "${{ secrets.STORE_PASSWORD }}" \
+            -keypass "${{ secrets.KEY_PASSWORD }}" \
+            -sigalg SHA256withRSA -digestalg SHA-256 \
+            android/app/build/outputs/bundle/release/app-release.aab harcana
+ 
+      - name: İmzalı AAB'yi doğrula
+        run: |
+          cd android/app/build/outputs/bundle/release
+          echo "Imzali AAB hazir: $(ls -la app-release.aab | awk '{print $5}') byte"
+          mv app-release.aab harcana-release-imzali.aab
+ 
+      # ==== ARTIFACT YÜKLEME ====
+      - name: APK'yı yükle (test/sideload için)
         uses: actions/upload-artifact@v4
         with:
           name: harcana-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+ 
+      - name: İMZALI AAB'yi yükle (Play Store'a direkt yüklenebilir)
+        uses: actions/upload-artifact@v4
+        with:
+          name: harcana-aab-IMZALI
+          path: android/app/build/outputs/bundle/release/harcana-release-imzali.aab
           if-no-files-found: error
