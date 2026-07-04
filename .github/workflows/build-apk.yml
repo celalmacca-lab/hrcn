@@ -35,68 +35,59 @@ jobs:
       - name: Android platformunu ekle
         run: npx cap add android
  
-      - name: Hedef SDK 36 yap (Play Store 31 Ağustos 2026 şartı)
+      - name: Hedef SDK 36 yap
         run: bash scripts/patch_android.sh || echo "SDK yaması atlandı"
  
       - name: İkon ve splash üret
-        run: npx capacitor-assets generate --android --iconBackgroundColor '#070811' --splashBackgroundColor '#070811' || echo "varsayilan ikon kullanilacak"
+        run: npx capacitor-assets generate --android --iconBackgroundColor '#070811' --splashBackgroundColor '#070811' || echo "varsayilan ikon"
  
-      - name: Ana ekran widget'ını enjekte et (best-effort)
-        run: bash scripts/patch_widget.sh || echo "widget yaması atlandı, uygulama widget'sız çalışır"
+      - name: Ana ekran widget'ını enjekte et
+        run: bash scripts/patch_widget.sh || echo "widget atlandı"
  
       - name: Web varlıklarını senkronla
         run: npx cap sync android
  
-      - name: APK derle (debug - telefona kurulabilir, test için)
+      - name: APK derle (debug - test için)
         run: |
           cd android
           chmod +x ./gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace
  
-      - name: AAB derle (release - imzasız ham çıktı)
+      - name: AAB derle (release - imzasız)
         run: |
           cd android
           ./gradlew bundleRelease --no-daemon --stacktrace
  
-      # ==== İMZALAMA (AAB için doğru yöntem: jarsigner) ====
       - name: Keystore'u secret'tan çöz
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/harcana.keystore"
           echo "Keystore boyutu: $(stat -c%s $RUNNER_TEMP/harcana.keystore) byte"
  
-      - name: Keystore içeriğini doğrula (teşhis)
-        run: |
-          keytool -list -v \
-            -keystore "$RUNNER_TEMP/harcana.keystore" \
-            -storepass "${{ secrets.STORE_PASSWORD }}" | head -20
- 
-      - name: AAB'yi jarsigner ile imzala
+      - name: AAB'yi jarsigner ile imzala (tek şifre)
         run: |
           jarsigner -verbose \
             -keystore "$RUNNER_TEMP/harcana.keystore" \
             -storepass "${{ secrets.STORE_PASSWORD }}" \
-            -keypass "${{ secrets.KEY_PASSWORD }}" \
+            -keypass "${{ secrets.STORE_PASSWORD }}" \
             -sigalg SHA256withRSA -digestalg SHA-256 \
             android/app/build/outputs/bundle/release/app-release.aab \
             harcana
  
       - name: İmzayı doğrula
         run: |
-          jarsigner -verify -verbose -certs \
-            android/app/build/outputs/bundle/release/app-release.aab | tail -5
+          jarsigner -verify android/app/build/outputs/bundle/release/app-release.aab && echo "IMZA GECERLI"
           cd android/app/build/outputs/bundle/release
           mv app-release.aab harcana-release-imzali.aab
-          echo "Imzali AAB hazir: $(stat -c%s harcana-release-imzali.aab) byte"
+          echo "Imzali AAB: $(stat -c%s harcana-release-imzali.aab) byte"
  
-      # ==== ARTIFACT YÜKLEME ====
-      - name: APK'yı yükle (test/sideload için)
+      - name: APK'yı yükle
         uses: actions/upload-artifact@v4
         with:
           name: harcana-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
  
-      - name: İMZALI AAB'yi yükle (Play Store'a direkt yüklenebilir)
+      - name: İMZALI AAB'yi yükle
         uses: actions/upload-artifact@v4
         with:
           name: harcana-aab-IMZALI
